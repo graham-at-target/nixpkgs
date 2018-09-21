@@ -254,41 +254,18 @@ rec {
       paths = pathsFromGraphByPopularity contents;
       maxLayers = 64; # 128 max for Docker
       buildInputs = [ jshon rsync ];
+      enableParallelBuilding = true;
     }
     ''
-
       # Delete impurities for store path layers, so they don't get
       # shared and taint other projects.
       cat ${baseJson} \
         | jshon -d config \
         | jshon -s "1970-01-01T00:00:01Z" -i created > generic.json
 
-      layerNumber=0
-      for path in $(cat "$paths"); do
-          if [ $layerNumber -lt $maxLayers ]; then
-            layerNumber=$((layerNumber + 1))
-            layerPath="./layers/$layerNumber"
-            echo "Creating layer #$layerNumber for $path"
-          else
-            layerPath="./layers/$layerNumber"
-            echo "Appending $path to layer #$layerNumber"
-          fi
+      head -n $((maxLayers - 1)) $paths | cat -n | xargs -P$NIX_BUILD_CORES -n2 ${./store-path-to-layer.sh} ${tarsum}
 
-          mkdir -p "$layerPath"
-          tar -rpf "$layerPath/layer.tar" --hard-dereference --sort=name \
-            --mtime="@$SOURCE_DATE_EPOCH" \
-            --owner=0 --group=0 "$path"
-
-          # Compute a checksum of the tarball.
-          tarsum=$(${tarsum} < $layerPath/layer.tar)
-
-          # Add a 'checksum' field to the JSON, with the value set to the
-          # checksum of the tarball.
-          cat ./generic.json | jshon -s "$tarsum" -i checksum > $layerPath/json
-
-          # Indicate to docker that we're using schema version 1.0.
-          echo -n "1.0" > $layerPath/VERSION
-      done
+      tail -n+$maxLayers $paths | xargs ${./store-path-to-layer.sh} ${tarsum} 64
 
       echo "Finished building layer '$name'"
 
