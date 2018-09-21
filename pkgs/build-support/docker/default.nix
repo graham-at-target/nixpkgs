@@ -11,6 +11,7 @@
   pigz,
   nixUnstable,
   perl,
+  python3,
   runCommand,
   rsync,
   shadow,
@@ -268,6 +269,91 @@ rec {
       mkdir $out
       printRegistration=1 perl ${pkgs.pathsFromGraph} closure-* > $out/db.dump
       perl ${pkgs.pathsFromGraph} closure-* > $out/storePaths
+    '';
+
+  # Create a "layer" (set of files).
+  mkManyPureLayers = {
+    name,
+    # Files to add to the layer.
+    contents,
+    baseJson,
+    uid ? 0, gid ? 0,
+  }:
+    runCommand "${name}-granular-docker-layers" {
+      paths = pathsFromGraphByPopularity contents;
+      maxLayers = 64; # 128 max for Docker
+      buildInputs = [ jshon rsync ];
+    }
+    ''
+
+      # Delete impurities for store path layers, so they don't get
+      # shared and taint other projects.
+      cat ${baseJson} \
+        | jshon -d config \
+        | jshon -s "1970-01-01T00:00:01Z" -i created > generic.json
+
+      layerNumber=0
+      for path in $(cat "$paths"); do
+          if [ $layerNumber -lt $maxLayers ]; then
+            layerNumber=$((layerNumber + 1))
+            layerPath="./layers/$layerNumber"
+            echo "Creating layer #$layerNumber for $path"
+          else
+            layerPath="./layers/$layerNumber"
+            echo "Appending $path to layer #$layerNumber"
+          fi
+
+          mkdir -p "$layerPath"
+          tar -rpf "$layerPath/layer.tar" --hard-dereference --sort=name \
+            --mtime="@$SOURCE_DATE_EPOCH" \
+            --owner=0 --group=0 "$path"
+
+          # Compute a checksum of the tarball.
+          tarsum=$(${tarsum} < $layerPath/layer.tar)
+
+          # Add a 'checksum' field to the JSON, with the value set to the
+          # checksum of the tarball.
+          cat ./generic.json | jshon -s "$tarsum" -i checksum > $layerPath/json
+
+          # Indicate to docker that we're using schema version 1.0.
+          echo -n "1.0" > $layerPath/VERSION
+      done
+
+      echo "Finished building layer '$name'"
+
+      mv ./layers $out
+    '';
+
+  # Create a "layer" (set of files).
+  mkSymlinkLayer = {
+    name,
+    # Files to add to the layer.
+    contents,
+    baseJson,
+    uid ? 0, gid ? 0,
+  }:
+    runCommand "${name}-symlink-layer" {
+      buildInputs = [ jshon rsync ];
+    }
+    ''
+      mkdir layer
+      find ${contents} -maxdepth 1 -mindepth 1 -print0 | xargs -0 -I{} ln -s {} ./layer/
+
+      # Tar up the layer and throw it into 'layer.tar'.
+      echo "Packing layer..."
+      mkdir $out
+      tar -C layer --sort=name --mtime="@$SOURCE_DATE_EPOCH" --owner=${toString uid} --group=${toString gid} -cf $out/layer.tar .
+
+      # Compute a checksum of the tarball.
+      echo "Computing layer checksum..."
+      tarsum=$(${tarsum} < $out/layer.tar)
+
+      # Add a 'checksum' field to the JSON, with the value set to the
+      # checksum of the tarball.
+      cat ${baseJson} | jshon -s "$tarsum" -i checksum > $out/json
+
+      # Indicate to docker that we're using schema version 1.0.
+      echo -n "1.0" > $out/VERSION
     '';
 
   # Create a "layer" (set of files).
@@ -645,4 +731,17 @@ rec {
         done;
       '' + extraCommands;
     });
+
+  pathsFromGraphByPopularity = closure:
+    runCommand "closure-paths"
+    {
+      exportReferencesGraph.graph = closure;
+       __structuredAttrs = true;
+       PATH = "${coreutils}/bin:${python3}/bin";
+       builder = builtins.toFile "builder"
+         ''
+           . .attrs.sh
+           python3 ${./closure-graph.py} .attrs.json graph > ''${outputs[out]}
+         '';
+    } "";
 }
