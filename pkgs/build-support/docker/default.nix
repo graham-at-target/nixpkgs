@@ -1,4 +1,5 @@
 {
+  buildEnv,
   coreutils,
   docker,
   e2fsprogs,
@@ -510,6 +511,7 @@ rec {
   }:
 
     let
+      contents' = buildEnv { inherit name; paths = contents; };
       baseName = baseNameOf name;
 
       # Create a JSON blob of the configuration. Set the date to unix zero.
@@ -528,11 +530,13 @@ rec {
 
       bulkLayers = mkManyPureLayers {
           name = baseName;
-          inherit baseJson contents uid gid;
+          contents = contents';
+          inherit baseJson uid gid;
         };
       customizationLayer = mkSymlinkLayer {
           name = baseName;
-          inherit baseJson contents uid gid;
+          contents = contents';
+          inherit baseJson uid gid;
         };
       result = runCommand "docker-image-${baseName}.tar.gz" {
         buildInputs = [ jshon pigz coreutils findutils jq ];
