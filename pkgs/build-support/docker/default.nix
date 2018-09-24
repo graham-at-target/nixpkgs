@@ -250,10 +250,13 @@ rec {
     contents,
     baseJson,
     uid ? 0, gid ? 0,
+    # Docker has a 42-layer maximum, we pick 24 to ensure there is plenty
+    # of room for extension
+    maxLayers ? 24
   }:
     runCommand "${name}-granular-docker-layers" {
+      inherit maxLayers;
       paths = pathsFromGraphByPopularity contents;
-      maxLayers = 64; # 128 max for Docker
       buildInputs = [ jshon rsync ];
       enableParallelBuilding = true;
     }
@@ -484,6 +487,9 @@ rec {
     diskSize ? 1024,
     # Time of creation of the image.
     created ? "1970-01-01T00:00:01Z",
+    # Docker has a 42-layer maximum, we pick 24 to ensure there is plenty
+    # of room for extension
+    maxLayers ? 24
   }:
 
     let
@@ -500,7 +506,7 @@ rec {
       bulkLayers = mkManyPureLayers {
           name = baseName;
           contents = contents';
-          inherit baseJson uid gid;
+          inherit baseJson uid gid maxLayers;
         };
       customizationLayer = mkSymlinkLayer {
           name = baseName;
