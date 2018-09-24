@@ -1,6 +1,10 @@
 
-import json
+
 import sys
+import json
+import unittest
+
+
 from pprint import pprint
 from collections import defaultdict
 
@@ -16,12 +20,71 @@ def find_roots(closures):
 
     return roots
 
+class TestFindRoots(unittest.TestCase):
+    def test_find_roots(self):
+        self.assertEqual(
+            find_roots([
+                {
+                    "path": "/nix/store/foo",
+                    "references": [
+                        "/nix/store/foo",
+                        "/nix/store/bar"
+                    ]
+                },
+                {
+                    "path": "/nix/store/bar",
+                    "references": [
+                        "/nix/store/bar",
+                        "/nix/store/tux"
+                    ]
+                },
+                {
+                    "path": "/nix/store/hello",
+                    "references": [
+                    ]
+                }
+            ]),
+            ["/nix/store/foo", "/nix/store/hello"]
+        )
+
+
 def any_refer_to(path, closures):
     for closure in closures:
         if path != closure['path']:
             if path in closure['references']:
                 return True
     return False
+
+class TestAnyReferTo(unittest.TestCase):
+    def test_has_references(self):
+        self.assertTrue(
+            any_refer_to(
+                "/nix/store/bar",
+                [
+                    {
+                        "path": "/nix/store/foo",
+                        "references": [
+                            "/nix/store/bar"
+                        ]
+                    },
+                ]
+            ),
+        )
+    def test_no_references(self):
+        self.assertFalse(
+            any_refer_to(
+                "/nix/store/foo",
+                [
+                    {
+                        "path": "/nix/store/foo",
+                        "references": [
+                            "/nix/store/foo",
+                            "/nix/store/bar"
+                        ]
+                    },
+                ]
+            ),
+        )
 
 def all_paths(closures):
     paths = []
@@ -30,6 +93,49 @@ def all_paths(closures):
         paths.extend(closure['references'])
     paths.sort()
     return list(set(paths))
+
+
+class TestAllPaths(unittest.TestCase):
+    def test_returns_all_paths(self):
+        self.assertEqual(
+            all_paths([
+                {
+                    "path": "/nix/store/foo",
+                    "references": [
+                        "/nix/store/foo",
+                        "/nix/store/bar"
+                    ]
+                },
+                {
+                    "path": "/nix/store/bar",
+                    "references": [
+                        "/nix/store/bar",
+                        "/nix/store/tux"
+                    ]
+                },
+                {
+                    "path": "/nix/store/hello",
+                    "references": [
+                    ]
+                }
+            ]),
+            ["/nix/store/foo", "/nix/store/bar", "/nix/store/hello", "/nix/store/tux",]
+        )
+    def test_no_references(self):
+        self.assertFalse(
+            any_refer_to(
+                "/nix/store/foo",
+                [
+                    {
+                        "path": "/nix/store/foo",
+                        "references": [
+                            "/nix/store/foo",
+                            "/nix/store/bar"
+                        ]
+                    },
+                ]
+            ),
+        )
 
 # Convert:
 #
@@ -59,6 +165,37 @@ def make_lookup(closures):
 
     return lookup
 
+class TestMakeLookup(unittest.TestCase):
+    def test_returns_lookp(self):
+        self.assertEqual(
+            make_lookup([
+                {
+                    "path": "/nix/store/foo",
+                    "references": [
+                        "/nix/store/foo",
+                        "/nix/store/bar"
+                    ]
+                },
+                {
+                    "path": "/nix/store/bar",
+                    "references": [
+                        "/nix/store/bar",
+                        "/nix/store/tux"
+                    ]
+                },
+                {
+                    "path": "/nix/store/hello",
+                    "references": [
+                    ]
+                }
+            ]),
+            {
+                "/nix/store/foo": [ "/nix/store/bar" ],
+                "/nix/store/bar": [ "/nix/store/tux" ],
+                "/nix/store/hello": [ ],
+            }
+        )
+
 # Convert:
 #
 # /nix/store/foo with
@@ -72,22 +209,45 @@ def make_lookup(closures):
 # To:
 #
 # {
-#    /nix/store/foo: {
-#                      /nix/store/bar: {
-#                                        /nix/store/baz: {
-#                                                           /nix/store/tux: {}
-#                                        }
-#                      }
-#                      /nix/store/baz: {
-#                                         /nix/store/tux: {}
-#                      }
-#    }
+#   /nix/store/bar: {
+#                    /nix/store/baz: {
+#                                     /nix/store/tux: {}
+#                    }
+#   },
+#   /nix/store/baz: {
+#                   /nix/store/tux: {}
+#   }
 # }
 def make_graph_segment_from_root(root, lookup):
     children = {}
     for ref in lookup[root]:
         children[ref] = make_graph_segment_from_root(ref, lookup)
     return children
+
+class TestMakeGraphSegmentFromRoot(unittest.TestCase):
+    def test_returns_graph(self):
+        self.assertEqual(
+            make_graph_segment_from_root("/nix/store/foo", {
+                "/nix/store/foo": [ "/nix/store/bar" ],
+                "/nix/store/bar": [ "/nix/store/tux" ],
+                "/nix/store/tux": [ ],
+                "/nix/store/hello": [ ],
+            }),
+            {
+                "/nix/store/bar": {
+                    "/nix/store/tux": {}
+                }
+            }
+        )
+    def test_returns_graph_tiny(self):
+        self.assertEqual(
+            make_graph_segment_from_root("/nix/store/tux", {
+                "/nix/store/foo": [ "/nix/store/bar" ],
+                "/nix/store/bar": [ "/nix/store/tux" ],
+                "/nix/store/tux": [ ],
+            }),
+            {}
+        )
 
 # Convert a graph segment in to a popularity-counted dictionary:
 #
@@ -121,6 +281,29 @@ def graph_popularity_contest(full_graph):
 
     return popularity
 
+class TestGraphPopularityContest(unittest.TestCase):
+    def test_counts_popularity(self):
+        self.assertEqual(
+            graph_popularity_contest({
+                "/nix/store/foo": {
+                    "/nix/store/bar": {
+                        "/nix/store/baz": {
+                            "/nix/store/tux": {}
+                        }
+                    },
+                    "/nix/store/baz": {
+                        "/nix/store/tux": {}
+                    }
+                }
+            }),
+            {
+                   "/nix/store/foo": 1,
+                   "/nix/store/bar": 1,
+                   "/nix/store/baz": 2,
+                   "/nix/store/tux": 2,
+            }
+        )
+
 # Emit a list of packages by popularity, most first:
 #
 # From:
@@ -150,6 +333,24 @@ def order_by_popularity(paths):
 
         flat_ordered.extend(reversed(paths))
     return list(reversed(flat_ordered))
+
+
+class TestOrderByPopularity(unittest.TestCase):
+    def test_returns_in_order(self):
+        self.assertEqual(
+            order_by_popularity({
+                   "/nix/store/foo": 1,
+                   "/nix/store/bar": 1,
+                   "/nix/store/baz": 2,
+                   "/nix/store/tux": 2,
+            }),
+            [
+                "/nix/store/baz",
+                "/nix/store/tux",
+                "/nix/store/bar",
+                "/nix/store/foo"
+            ]
+        )
 
 def package_name(path):
     parts = path.split('-')
@@ -202,4 +403,8 @@ def main():
     ordered.extend(missing)
     print("\n".join(ordered))
 
-main()
+if "--tests" in sys.argv:
+    # Don't pass --tests otherwise unittest gets mad
+    unittest.main(argv = [f for f in sys.argv if f != "--tests" ])
+else:
+    main()
