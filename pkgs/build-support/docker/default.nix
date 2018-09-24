@@ -264,9 +264,16 @@ rec {
         | jshon -d config \
         | jshon -s "1970-01-01T00:00:01Z" -i created > generic.json
 
+      # WARNING!
+      # The following code is fiddly w.r.t. ensuring every layer is
+      # created, and that no paths are missed. If you change the
+      # following head and tail call lines, double-check that your
+      # code behaves properly when the number of layers equals:
+      #      maxLayers-1, maxLayers, and maxLayers+1
       head -n $((maxLayers - 1)) $paths | cat -n | xargs -P$NIX_BUILD_CORES -n2 ${./store-path-to-layer.sh} ${tarsum}
-
-      tail -n+$maxLayers $paths | xargs ${./store-path-to-layer.sh} ${tarsum} 64
+      if [ $(cat $paths | wc -l) -ge $maxLayers ]; then
+        tail -n+$maxLayers $paths | xargs ${./store-path-to-layer.sh} ${tarsum} $maxLayers
+      fi
 
       echo "Finished building layer '$name'"
 
